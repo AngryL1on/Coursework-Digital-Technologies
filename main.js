@@ -1,20 +1,16 @@
-'use strict'; //говорим JavaScript-движку, что код должен быть выполнен в строгом режиме
-//подключаем библиотеки через переменные, которые предоставят доступ к их функционалу
+'use strict';
 var CryptoJS = require("crypto-js");
 var express = require("express");
 var bodyParser = require('body-parser');
 var WebSocket = require("ws");
+const string_decoder = require("string_decoder");
 
 var http_port = process.env.HTTP_PORT || 3001;
 var p2p_port = process.env.P2P_PORT || 6001;
 var initialPeers = process.env.PEERS ? process.env.PEERS.split(',') : [];
 var difficulty = 4; //переменная сложности(количество нулей)
 
-
-//определим класс, который используется для создания
-// объектов, представляющих блоки в блокчейн-сети
 class Block {
-    //определим конструктор класса, который принимает следующие аргументы
     constructor(index, previousHash, timestamp, data, hash, difficulty, nonce) {
         this.index = index; //число, представляющее индекс блока в цепочке блоков
         this.previousHash = previousHash.toString(); //строка, представляющая хеш предыдущего блока в цепочке блоков
@@ -26,11 +22,7 @@ class Block {
     }
 }
 
-//создадим массив сокетов, через которые происходит обмен
-// сообщениями между участниками сети
 var sockets = [];
-//определим тип сообщений,
-// отправляемых между участниками сети
 var MessageType = {
     QUERY_LATEST: 0,
     QUERY_ALL: 1,
@@ -41,11 +33,9 @@ var getGenesisBlock = () => {
     return new Block(0, "0", 1682839690, "RUT-MIIT first block",
         "8d9d5a7ff4a78042ea6737bf59c772f8ed27ef3c9b576eac1976c91aaf48d2de", 0, 0);
 };
-//кладем первый блок в блокчейн
+
 var blockchain = [getGenesisBlock()];
 
-//Создадим и запустим веб-сервер, используемый для обслуживания
-// запросов от узлов в блокчейн-сети
 var initHttpServer = () => {
     var app = express();
     app.use(bodyParser.json());
@@ -69,36 +59,21 @@ var initHttpServer = () => {
     app.listen(http_port, () => console.log('Listening http on port: ' +
         http_port));
 };
-/*
-Сервер отвечает по следующим endpoint’ам:
-/blocks - для получения списка блоков в цепочке блоков.
-/mineBlock - для майнинга (добычи) нового блока. При POST запросе
-сервер создает новый блок с данными, полученными от клиента, добавляет
-его в цепочку блоков с помощью функции addBlock() и отправляет
-сообщение обновления всем узлам в сети.
-/peers - для получения списка узлов в сети.
-/addPeer - для добавления нового узла в сеть. При POST запросе сервер
-подключается к указанному узлу и отправляет сообщение обновления
-всем узлам в сети.
-*/
 
-//создадим и запустим веб-сервер, используемый для обмена
-// сообщениями между узлами в блокчейн-сети
 var initP2PServer = () => {
     var server = new WebSocket.Server({port: p2p_port});
     server.on('connection', ws => initConnection(ws));
     console.log('listening websocket p2p port on: ' + p2p_port);
 };
-//добавляем реализацию функции mineBlock
-var mineBlock = (blockData) => {
+
+var mineBlock = (blockData, targetLetters) => {
     var previousBlock = getLatestBlock();
     var nextIndex = previousBlock.index + 1;
     var nonce = 0;
     var nextTimestamp = new Date().getTime() / 1000;
-    var nextHash = calculateHash(nextIndex, previousBlock.hash, nextTimestamp,
-        blockData, nonce);
-    while (nextHash.substring(0, difficulty) !== Array(difficulty +
-        1).join("0")){
+    var nextHash = calculateHash(nextIndex, previousBlock.hash, nextTimestamp, blockData, nonce);
+
+    while (nextHash.substring(nextHash.length - 3) !== "211"){
         nonce++;
         nextTimestamp = new Date().getTime() / 1000;
         nextHash = calculateHash(nextIndex, previousBlock.hash,
@@ -114,15 +89,13 @@ var mineBlock = (blockData) => {
         nextHash, difficulty, nonce);
 }
 
-//Далее проинициализируем и определим функции, используемые для
-// обработки сообщений. Если ошибка – соединение закрывается, сокет
-// удаляется, в противном случае сообщения обрабатываются
 var initConnection = (ws) => {
     sockets.push(ws);
     initMessageHandler(ws);
     initErrorHandler(ws);
     write(ws, queryChainLengthMsg());
 };
+
 var initMessageHandler = (ws) => {
     ws.on('message', (data) => {
         var message = JSON.parse(data);
@@ -181,7 +154,6 @@ var handleBlockchainResponse = (message) => {
     }
 };
 
-//проинициализируем и определим функцию, используемую для генерации блока
 var generateNextBlock = (blockData) => {
     var previousBlock = getLatestBlock();
     var nextIndex = previousBlock.index + 1;
@@ -190,23 +162,28 @@ var generateNextBlock = (blockData) => {
     return new Block(nextIndex, previousBlock.hash, nextTimestamp, blockData, nextHash);
 };
 
-//проинициализируем и определим функцию, используемую для расчета хеша
 var calculateHashForBlock = (block) => {
     return calculateHash(block.index, block.previousHash, block.timestamp,
         block.data, block.nonce);
 };
+
 var calculateHash = (index, previousHash, timestamp, data, nonce) => {
-    return CryptoJS.SHA256(index + previousHash + timestamp + data + nonce).toString();
+
+    var hashOne = CryptoJS.SHA1(index + previousHash + timestamp + data + nonce).toString();
+
+    var hashTwo = CryptoJS.MD5(index + previousHash + timestamp + data + nonce).toString();
+
+    var hashOut = hashOne.split('').slice(0,hashOne.length/2).join('') + hashTwo.split('').slice(0,hashTwo.length/2).join('');
+
+    return hashOut.toString();
 };
 
-//проинициализируем и определим функцию, используемую для добавления блока в цепочку
 var addBlock = (newBlock) => {
     if (isValidNewBlock(newBlock, getLatestBlock())) {
         blockchain.push(newBlock);
     }
 };
 
-//проинициализируем и определим функцию, используемую для проверки добавленного блока
 var isValidNewBlock = (newBlock, previousBlock) => {
     if (previousBlock.index + 1 !== newBlock.index) {
         console.log('invalid index');
@@ -224,7 +201,6 @@ var isValidNewBlock = (newBlock, previousBlock) => {
     return true;
 };
 
-//функция определения самой длинной цепочки и
 var replaceChain = (newBlocks) => {
     if (isValidChain(newBlocks) && newBlocks.length > blockchain.length) {
         console.log('Received blockchain is valid. Replacing current blockchain with received blockchain');
@@ -234,7 +210,7 @@ var replaceChain = (newBlocks) => {
         console.log('Received blockchain invalid');
     }
 };
-//проверка её на допустимость.
+
 var isValidChain = (blockchainToValidate) => {
     if (JSON.stringify(blockchainToValidate[0]) !==
         JSON.stringify(getGenesisBlock())) {
@@ -251,7 +227,6 @@ var isValidChain = (blockchainToValidate) => {
     return true;
 };
 
-//определим реализацию вспомогательных функций и запустим веб-сервера
 var getLatestBlock = () => blockchain[blockchain.length - 1];
 var queryChainLengthMsg = () => ({'type': MessageType.QUERY_LATEST});
 var queryAllMsg = () => ({'type': MessageType.QUERY_ALL});
